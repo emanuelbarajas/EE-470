@@ -1,0 +1,465 @@
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>EE 470 MQTT Monitoring</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f7f7f9;
+            color: #263247;
+            margin: 0;
+        }
+
+        header {
+            background: #117a72;
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        main {
+            max-width: 1000px;
+            margin: 30px auto;
+            padding: 15px;
+        }
+
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px #00000015;
+        }
+
+        .value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #117a72;
+        }
+
+        .led-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .led-card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 2px 5px #00000015;
+        }
+
+        .led-indicator {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            margin: 15px auto;
+            background: #a0a0a0;
+        }
+
+        .led-indicator.on {
+            background: #18a558;
+            box-shadow: 0 0 12px #18a55866;
+        }
+
+        .led-indicator.off {
+            background: #d64545;
+        }
+
+        .led-state {
+            font-size: 26px;
+            font-weight: bold;
+        }
+
+        .led-time {
+            font-size: 13px;
+            color: #666;
+            line-height: 1.5;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 350px;
+        }
+
+        #status {
+            color: #555;
+        }
+
+        @media (max-width: 600px) {
+            .led-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <h1>EE 470 MQTT Monitoring</h1>
+    <p>ESP8266 Potentiometer and LED Monitoring</p>
+</header>
+
+<main>
+
+    <!-- Latest Potentiometer Measurement -->
+
+    <div class="card">
+        <h2>Latest Voltage</h2>
+
+        <div class="value" id="voltage">
+            -- V
+        </div>
+
+        <p id="timestamp">
+            Waiting for measurements...
+        </p>
+
+        <p id="status">
+            Connecting to database...
+        </p>
+    </div>
+
+    <!-- LED Status Indicators -->
+
+    <div class="led-grid">
+
+        <div class="led-card">
+            <h2>My LED</h2>
+
+            <div
+                class="led-indicator"
+                id="myLedIndicator">
+            </div>
+
+            <div class="led-state" id="myLedState">
+                UNKNOWN
+            </div>
+
+            <p class="led-time" id="myLedTime">
+                Waiting for LED command...
+            </p>
+        </div>
+
+        <div class="led-card">
+            <h2>Antonio's LED</h2>
+
+            <div
+                class="led-indicator"
+                id="antonioLedIndicator">
+            </div>
+
+            <div class="led-state" id="antonioLedState">
+                UNKNOWN
+            </div>
+
+            <p class="led-time" id="antonioLedTime">
+                Waiting for LED command...
+            </p>
+        </div>
+
+    </div>
+
+    <!-- Potentiometer Graph -->
+
+    <div class="card">
+        <h2>Voltage vs. Time</h2>
+
+        <div class="chart-container">
+            <canvas id="voltageChart"></canvas>
+        </div>
+    </div>
+
+</main>
+
+<script>
+
+// --------------------------------------------------
+// Pacific Time Formatting
+// --------------------------------------------------
+
+const PACIFIC_TIME_ZONE = "America/Los_Angeles";
+
+function formatPacificTime(timestamp) {
+
+    const date = new Date(timestamp);
+
+    if (isNaN(date.getTime())) {
+        return "Invalid timestamp";
+    }
+
+    return date.toLocaleString("en-US", {
+        timeZone: PACIFIC_TIME_ZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+    });
+}
+
+function formatPacificDateTime(timestamp) {
+
+    const date = new Date(timestamp);
+
+    if (isNaN(date.getTime())) {
+        return "Invalid timestamp";
+    }
+
+    return date.toLocaleString("en-US", {
+        timeZone: PACIFIC_TIME_ZONE,
+        dateStyle: "medium",
+        timeStyle: "medium"
+    });
+}
+
+// --------------------------------------------------
+// Chart Configuration
+// --------------------------------------------------
+
+const ctx = document.getElementById(
+    "voltageChart"
+);
+
+const voltageChart = new Chart(ctx, {
+
+    type: "line",
+
+    data: {
+        labels: [],
+
+        datasets: [{
+            label: "Potentiometer Voltage (V)",
+            data: [],
+            borderColor: "#117a72",
+            backgroundColor: "rgba(17,122,114,0.15)",
+            borderWidth: 2,
+            tension: 0.2,
+            pointRadius: 3
+        }]
+    },
+
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+
+        scales: {
+            x: {
+                title: {
+                    display: true,
+                    text: "Time Received (Pacific)"
+                },
+
+                ticks: {
+                    maxTicksLimit: 8,
+                    maxRotation: 45,
+                    minRotation: 0
+                }
+            },
+
+            y: {
+                min: 0,
+                max: 3.3,
+
+                title: {
+                    display: true,
+                    text: "Voltage (V)"
+                }
+            }
+        }
+    }
+});
+
+// --------------------------------------------------
+// Update LED Status Indicator
+// --------------------------------------------------
+
+function updateLED(name, data) {
+
+    const prefix =
+        name === "emanuel" ? "my" : "antonio";
+
+    const indicator = document.getElementById(
+        prefix + "LedIndicator"
+    );
+
+    const stateElement = document.getElementById(
+        prefix + "LedState"
+    );
+
+    const timeElement = document.getElementById(
+        prefix + "LedTime"
+    );
+
+    indicator.className = "led-indicator";
+
+    if (!data || (data.state !== 0 && data.state !== 1)) {
+
+        stateElement.textContent = "UNKNOWN";
+
+        timeElement.textContent =
+            "No LED command recorded.";
+
+        return;
+    }
+
+    const isOn = data.state === 1;
+
+    indicator.classList.add(
+        isOn ? "on" : "off"
+    );
+
+    stateElement.textContent =
+        isOn ? "ON" : "OFF";
+
+    timeElement.textContent =
+        "Last command: " +
+        formatPacificDateTime(data.time_updated);
+}
+
+// --------------------------------------------------
+// Retrieve Measurements and LED Statuses
+// --------------------------------------------------
+
+async function updateMeasurements() {
+
+    try {
+
+        const response = await fetch(
+            "mqtt_read.php",
+            { cache: "no-store" }
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                "HTTP " + response.status
+            );
+        }
+
+        const data = await response.json();
+
+        if (
+            !data ||
+            !Array.isArray(data.measurements)
+        ) {
+            throw new Error("Invalid JSON response");
+        }
+
+        // -----------------------------------------
+        // Update LED Statuses
+        // -----------------------------------------
+
+        const ledStatus = data.led_status || {};
+
+        updateLED(
+            "emanuel",
+            ledStatus.emanuel
+        );
+
+        updateLED(
+            "antonio",
+            ledStatus.antonio
+        );
+
+        // -----------------------------------------
+        // Update Potentiometer Measurements
+        // -----------------------------------------
+
+        const measurements = data.measurements;
+
+        if (measurements.length === 0) {
+
+            document.getElementById("status")
+                .textContent = "No measurements yet.";
+
+            document.getElementById("voltage")
+                .textContent = "-- V";
+
+            document.getElementById("timestamp")
+                .textContent = "Waiting for measurements...";
+
+            voltageChart.data.labels = [];
+            voltageChart.data.datasets[0].data = [];
+
+            voltageChart.update();
+
+            return;
+        }
+
+        const labels = measurements.map(row =>
+            formatPacificTime(row.time_received)
+        );
+
+        const values = measurements.map(row =>
+            Number(row.voltage)
+        );
+
+        voltageChart.data.labels = labels;
+
+        voltageChart.data.datasets[0].data = values;
+
+        voltageChart.update();
+
+        // -----------------------------------------
+        // Display Latest Measurement
+        // -----------------------------------------
+
+        const latest =
+            measurements[measurements.length - 1];
+
+        document.getElementById("voltage")
+            .textContent =
+            Number(latest.voltage).toFixed(3) + " V";
+
+        document.getElementById("timestamp")
+            .textContent =
+            "Last measurement: " +
+            formatPacificDateTime(latest.time_received);
+
+        document.getElementById("status")
+            .textContent =
+            "Database connected. " +
+            measurements.length +
+            " readings displayed.";
+
+    } catch (error) {
+
+        console.error(error);
+
+        document.getElementById("status")
+            .textContent =
+            "Error retrieving MQTT data.";
+    }
+}
+
+// --------------------------------------------------
+// Initial Load and Automatic Refresh
+// --------------------------------------------------
+
+updateMeasurements();
+
+setInterval(updateMeasurements, 15000);
+
+</script>
+
+</body>
+</html>
